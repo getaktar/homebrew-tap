@@ -1,0 +1,50 @@
+name: Bump cask
+
+# Follows the app's Sparkle appcast, so a new release reaches Homebrew
+# without any step on the release machine.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Update Casks/aktar.rb to the appcast version
+        run: |
+          set -euo pipefail
+          CASK=Casks/aktar.rb
+          FEED=https://github.com/getaktar/mac/releases/latest/download/appcast.xml
+          LATEST="$(curl -fsSL "$FEED" | sed -n 's:.*<sparkle\:shortVersionString>\(.*\)</sparkle\:shortVersionString>.*:\1:p' | head -1)"
+          CURRENT="$(sed -n 's/^  version "\(.*\)"/\1/p' "$CASK")"
+          if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected appcast version: '$LATEST'" >&2
+            exit 1
+          fi
+          if [ "$LATEST" = "$CURRENT" ]; then
+            echo "Cask is already at $CURRENT"
+            exit 0
+          fi
+          curl -fsSL -o Aktar.dmg "https://github.com/getaktar/mac/releases/download/v$LATEST/Aktar-$LATEST.dmg"
+          SHA256="$(sha256sum Aktar.dmg | cut -d' ' -f1)"
+          rm Aktar.dmg
+          sed -i -E \
+            -e "s/^  version \".*\"/  version \"$LATEST\"/" \
+            -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
+            "$CASK"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update aktar to $LATEST"
+          git push
