@@ -1,8 +1,8 @@
 class AktarCli < Formula
   desc "Upload files to your own S3, R2 or B2 bucket through the Aktar app"
   homepage "https://getaktar.com/cli/"
-  url "https://registry.npmjs.org/@getaktar/cli/-/cli-0.1.0.tgz"
-  sha256 "56adda4e6b54c9bd8bea0d74b90662f67623fc1d84ca51aed666eeb32634defb"
+  url "https://registry.npmjs.org/@getaktar/cli/-/cli-0.1.1.tgz"
+  sha256 "0bf7e7bea25bf5417f64f8a059f5571b17ac4f71315523b4b4b8439d2d6c834e"
   license "MIT"
 
   depends_on "node"
