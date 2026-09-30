@@ -71,6 +71,7 @@ jobs:
             "$FORMULA"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase --quiet
           git commit -am "Update aktar-cli to $LATEST"
+          # The cask step above may have pushed a commit of its own.
+          git pull --rebase --quiet
           git push
