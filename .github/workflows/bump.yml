@@ -1,7 +1,7 @@
 name: Bump cask
 
-# Follows the app's Sparkle appcast, so a new release reaches Homebrew
-# without any step on the release machine.
+# Follows the app's Sparkle appcast and the CLI's npm package, so new
+# releases reach Homebrew without any step on the release machine.
 on:
   schedule:
     - cron: "17 * * * *"
@@ -47,4 +47,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Update aktar to $LATEST"
+          git push
+
+      - name: Update Formula/aktar-cli.rb to the npm version
+        run: |
+          set -euo pipefail
+          FORMULA=Formula/aktar-cli.rb
+          LATEST="$(curl -fsSL https://registry.npmjs.org/@getaktar/cli/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)"
+          CURRENT="$(sed -n 's#^  url ".*/cli-\(.*\)\.tgz"#\1#p' "$FORMULA")"
+          if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected npm version: '$LATEST'" >&2
+            exit 1
+          fi
+          if [ "$LATEST" = "$CURRENT" ]; then
+            echo "Formula is already at $CURRENT"
+            exit 0
+          fi
+          URL="https://registry.npmjs.org/@getaktar/cli/-/cli-$LATEST.tgz"
+          SHA256="$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)"
+          sed -i -E \
+            -e "s#^  url \".*\"#  url \"$URL\"#" \
+            -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
+            "$FORMULA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --quiet
+          git commit -am "Update aktar-cli to $LATEST"
           git push
