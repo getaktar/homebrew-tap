@@ -11,7 +11,7 @@ class AktarCli < Formula
     system "npm", "install", *std_npm_args
     # Carry node's path along, so apps that don't see the shell's PATH
     # (Typora's custom upload command, for one) can still run it.
-    (bin/"aktar").write_env_script libexec/"bin/aktar", PATH: "#{Formula["node"].opt_bin}:$PATH"
+    (bin/"aktar").write_env_script libexec/"bin/aktar", PATH: "#{formula_opt_bin("node")}:$PATH"
   end
 
   test do
