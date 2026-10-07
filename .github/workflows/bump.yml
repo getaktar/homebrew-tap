@@ -2,6 +2,11 @@ name: Bump cask
 
 # Follows the app's Sparkle appcast and the CLI's npm package, so new
 # releases reach Homebrew without any step on the release machine.
+#
+# A checksum is only written after the download has been checked: the DMG
+# must be signed with Aktar's Developer ID (team Y86FU5TSPQ) and notarized,
+# and the npm tarball must match the integrity the registry published for it.
+# A release asset or npm version that fails a check stops the bump.
 on:
   schedule:
     - cron: "17 * * * *"
@@ -15,32 +20,77 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bump:
+  # Cheap hourly check on Linux; the macOS job only runs when there is a new
+  # version to verify.
+  check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      cask: ${{ steps.cask.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Update Casks/aktar.rb to the appcast version
+      - name: Compare Casks/aktar.rb with the appcast version
+        id: cask
         run: |
           set -euo pipefail
-          CASK=Casks/aktar.rb
           FEED=https://github.com/getaktar/mac/releases/latest/download/appcast.xml
           LATEST="$(curl -fsSL "$FEED" | sed -n 's:.*<sparkle\:shortVersionString>\(.*\)</sparkle\:shortVersionString>.*:\1:p' | head -1)"
-          CURRENT="$(sed -n 's/^  version "\(.*\)"/\1/p' "$CASK")"
+          CURRENT="$(sed -n 's/^  version "\(.*\)"/\1/p' Casks/aktar.rb)"
           if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Unexpected appcast version: '$LATEST'" >&2
             exit 1
           fi
           if [ "$LATEST" = "$CURRENT" ]; then
             echo "Cask is already at $CURRENT"
-            exit 0
+          else
+            echo "version=$LATEST" >> "$GITHUB_OUTPUT"
           fi
-          curl -fsSL -o Aktar.dmg "https://github.com/getaktar/mac/releases/download/v$LATEST/Aktar-$LATEST.dmg"
-          SHA256="$(sha256sum Aktar.dmg | cut -d' ' -f1)"
-          rm Aktar.dmg
-          sed -i -E \
+
+  cask:
+    needs: check
+    if: needs.check.outputs.cask != ''
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      LATEST: ${{ needs.check.outputs.cask }}
+      TEAM_ID: Y86FU5TSPQ
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download and verify the DMG, then update Casks/aktar.rb
+        run: |
+          set -euo pipefail
+          # Checked again here: this value ends up in sed and the commit message.
+          if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected version: '$LATEST'" >&2
+            exit 1
+          fi
+          CASK=Casks/aktar.rb
+          DMG="$RUNNER_TEMP/Aktar.dmg"
+          curl -fsSL -o "$DMG" "https://github.com/getaktar/mac/releases/download/v$LATEST/Aktar-$LATEST.dmg"
+
+          # Signed by Aktar's Developer ID and notarized by Apple (checked online).
+          REQ="anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\" and notarized"
+          codesign --verify --strict --check-notarization -R="$REQ" -v "$DMG"
+          xcrun stapler validate "$DMG"
+          # Gatekeeper's verdict, as a user's Mac would give it on open.
+          if spctl --status | grep -q disabled; then sudo spctl --master-enable; fi
+          spctl -a -t open --context context:primary-signature -vv "$DMG" 2>&1 | tee "$RUNNER_TEMP/spctl.txt"
+          grep -q "source=Notarized Developer ID" "$RUNNER_TEMP/spctl.txt"
+
+          # The app inside: same team, notarized, and the version the appcast announced.
+          MNT="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$MNT" "$DMG" >/dev/null
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          APP="$MNT/Aktar.app"
+          codesign --verify --deep --strict --check-notarization -R="$REQ" -v "$APP"
+          xcrun stapler validate "$APP"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.getaktar.mac" ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$LATEST" ]
+
+          SHA256="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+          sed -i '' -E \
             -e "s/^  version \".*\"/  version \"$LATEST\"/" \
             -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
             "$CASK"
@@ -49,10 +99,22 @@ jobs:
           git commit -am "Update aktar to $LATEST"
           git push
 
+  formula:
+    needs: cask
+    # Runs whether or not the cask job ran or passed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Update Formula/aktar-cli.rb to the npm version
         run: |
           set -euo pipefail
           FORMULA=Formula/aktar-cli.rb
+          # The cask job may have pushed a commit since this checkout's ref.
+          git pull --rebase --quiet origin "$GITHUB_REF_NAME"
           LATEST="$(curl -fsSL https://registry.npmjs.org/@getaktar/cli/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)"
           CURRENT="$(sed -n 's#^  url ".*/cli-\(.*\)\.tgz"#\1#p' "$FORMULA")"
           if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -64,7 +126,18 @@ jobs:
             exit 0
           fi
           URL="https://registry.npmjs.org/@getaktar/cli/-/cli-$LATEST.tgz"
-          SHA256="$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)"
+          TGZ="$RUNNER_TEMP/cli.tgz"
+          curl -fsSL -o "$TGZ" "$URL"
+          # The tarball must be the one npm recorded at publish time. There is
+          # no provenance attestation to check: the CLI is published from the
+          # maintainer's machine (security-key 2FA), not from CI.
+          EXPECTED="$(npm view "@getaktar/cli@$LATEST" dist.integrity)"
+          ACTUAL="sha512-$(openssl dgst -sha512 -binary "$TGZ" | base64 -w0)"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "Tarball integrity mismatch: npm says '$EXPECTED', download is '$ACTUAL'" >&2
+            exit 1
+          fi
+          SHA256="$(sha256sum "$TGZ" | cut -d' ' -f1)"
           sed -i -E \
             -e "s#^  url \".*\"#  url \"$URL\"#" \
             -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
@@ -72,6 +145,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Update aktar-cli to $LATEST"
-          # The cask step above may have pushed a commit of its own.
-          git pull --rebase --quiet
           git push
