@@ -1,6 +1,6 @@
 cask "aktar" do
-  version "0.18.0"
-  sha256 "b7f4009c2046b7af43b55284ba3684954f948cebe86fdf0724c7dd24ae8e6999"
+  version "0.18.1"
+  sha256 "634bf25de9876832d1f642f60dbe0c887bc3e46799c076098ae8ac852010cafd"
 
   url "https://github.com/getaktar/mac/releases/download/v#{version}/Aktar-#{version}.dmg"
   name "Aktar"
