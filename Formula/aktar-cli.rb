@@ -19,5 +19,15 @@ class AktarCli < Formula
     # Nothing is listening in the test sandbox, so it says how to connect.
     output = shell_output("#{bin}/aktar status 2>&1", 3)
     assert_match "aktar login", output
+
+    # The MCP server lists its tools without the app; --read-only leaves out uploads.
+    requests = <<~JSON
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"brew","version":"1"}}}
+      {"jsonrpc":"2.0","method":"notifications/initialized"}
+      {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+    JSON
+    tools = pipe_output("#{bin}/aktar mcp --read-only --root #{testpath}", requests, 0)
+    assert_match "\"list_bucket\"", tools
+    refute_match "\"upload_file\"", tools
   end
 end
